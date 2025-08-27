@@ -59,25 +59,31 @@ run_interactive_picker() {
         --with-nth 1.. \
         --bind 'ctrl-a:select-all' \
         --bind 'enter:become(
-            printf "%s\n" {+} | while IFS=: read -r file test; do echo "$file:$test"; done | \
+            # Extract file:test pairs and group by package directory
+            printf "%s\n" {+} | \
             awk -F: '\''
                 {
                     file=$1
                     test=$2
-                    if (files[file]) {
-                        files[file] = files[file] "|" test
+                    dir=file
+                    gsub(/\/[^\/]+$/, "", dir)  # Get directory from file path
+                    
+                    # Group tests by package directory
+                    if (packages[dir]) {
+                        packages[dir] = packages[dir] "|" test
                     } else {
-                        files[file] = test
+                        packages[dir] = test
                     }
                 }
                 END {
-                    for (f in files) {
-                        print f ":" files[f]
+                    for (pkg in packages) {
+                        print pkg ":" packages[pkg]
                     }
                 }
             '\'' | \
-            while IFS=: read -r file tests; do
-                (cd "$(dirname "$file")" && gotestsum --format testname -- -run "^($tests)$")
+            while IFS=: read -r pkg tests; do
+                echo "Running tests in $pkg"
+                (cd "$pkg" && gotestsum --format testname -- -run "^($tests)$")
             done
         )'
 }
