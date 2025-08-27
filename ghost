@@ -1,15 +1,25 @@
 #!/usr/bin/env bash
 
+# Configuration
+GHOST_DIR="$HOME/.ghost"
+LOG_DIR="$GHOST_DIR/logs"
+LAST_RUN_FILE="$GHOST_DIR/last_run"
+
+# Ensure directories exist
+mkdir -p "$LOG_DIR"
+
 # Function to show help
 show_help() {
     cat << EOF
-ghost - A vibe-coded CLI tool to run Go tests ✨
+ghost - A spooky Go test runner 👻
 
 USAGE:
     ghost [OPTIONS] [ARGUMENT]
 
 OPTIONS:
     -h, --help    Show this help message
+    -r, --rerun   Rerun the last selected set of tests
+    -l, --log     Output path to the latest log file
 
 ARGUMENTS:
     <none>        Interactive test picker with fzf
@@ -24,11 +34,16 @@ INTERACTIVE MODE KEYS:
     Enter         Run selected tests
 
 EXAMPLES:
-    ghost                         # Open interactive test picker
+    ghost                        # Open interactive test picker
     ghost TestLogin              # Run all tests matching "TestLogin"
     ghost ./pkg/auth             # Run all tests in pkg/auth directory
     ghost auth_test.go           # Run all tests in auth_test.go
     ghost ./...                  # Run all tests in current directory tree
+    ghost --rerun                # Rerun the last selected tests
+    ghost --log                  # Output path to latest log file
+
+LOGS:
+    Test output is saved to ~/.ghost/logs/ghost-YYYYMMDD-HHMMSS.log
 
 REQUIREMENTS:
     fd, rg, fzf, gotestsum
@@ -37,37 +52,84 @@ EOF
     exit 0
 }
 
-# Check for help flag
-if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
-    show_help
-fi
+# Function to get log filename
+get_log_filename() {
+    echo "$LOG_DIR/ghost-$(date +%Y%m%d-%H%M%S).log"
+}
+
+# Function to show latest log file path
+show_latest_log() {
+    local latest_log=$(ls -t "$LOG_DIR"/ghost-*.log 2>/dev/null | head -1)
+    if [ -n "$latest_log" ]; then
+        echo "$latest_log"
+    fi
+    exit 0
+}
+
+# Function to save last run configuration
+save_last_run() {
+    echo "$@" > "$LAST_RUN_FILE"
+}
+
+# Function to rerun last tests
+rerun_last_tests() {
+    if [ ! -f "$LAST_RUN_FILE" ]; then
+        echo "No previous test run found"
+        exit 1
+    fi
+    
+    local last_run=$(cat "$LAST_RUN_FILE")
+    eval "$last_run"
+}
+
+# Check for flags
+case "$1" in
+    -h|--help)
+        show_help
+        ;;
+    -r|--rerun)
+        rerun_last_tests
+        ;;
+    -l|--log)
+        show_latest_log
+        ;;
+esac
+
+# Force color output
+export FORCE_COLOR=1
+export TERM=${TERM:-xterm-256color}
 
 # Function to run tests in a directory
 run_tests_in_directory() {
     local dir="$1"
-    cd "$dir" && gotestsum --format testname
+    local log_file=$(get_log_filename)
+    cd "$dir" && gotestsum --format testname --no-color=false 2>&1 | tee "$log_file"
 }
 
 # Function to run tests in a test file
 run_tests_in_file() {
     local file="$1"
-    cd "$(dirname "$file")" && gotestsum --format testname
+    local log_file=$(get_log_filename)
+    cd "$(dirname "$file")" && gotestsum --format testname --no-color=false 2>&1 | tee "$log_file"
 }
 
 # Function to run tests by package path (e.g., ./...)
 run_tests_by_package_path() {
     local path="$1"
-    gotestsum --format testname "$path"
+    local log_file=$(get_log_filename)
+    gotestsum --format testname --no-color=false "$path" 2>&1 | tee "$log_file"
 }
 
 # Function to run test by pattern
 run_tests_by_pattern() {
     local pattern="$1"
+    local log_file=$(get_log_filename)
+    
     fd -e go -g '*_test.go' | xargs rg "^func ($pattern\w*)\(" -l | xargs -I {} dirname {} | sort -u | \
     while read -r dir; do
         echo "Running tests matching '$pattern' in $dir"
-        (cd "$dir" && gotestsum --format testname -- -run "$pattern")
-    done
+        (cd "$dir" && gotestsum --format testname --no-color=false -- -run "$pattern")
+    done 2>&1 | tee "$log_file"
 }
 
 # Function to determine argument type and run appropriate function
@@ -101,6 +163,16 @@ run_interactive_picker() {
         --with-nth 1.. \
         --bind 'ctrl-a:select-all' \
         --bind 'enter:become(
+            log_file=$(date +'"$LOG_DIR"'/ghost-%Y%m%d-%H%M%S.log)
+            
+            # Save the selected tests for rerun functionality
+            selected_tests=$(printf "%s\n" {+} | tr "\n" "|" | sed "s/|$//" | sed "s/|/\\\\n/g")
+            echo "echo \"$selected_tests\" | awk -F: '\''{file=\$1; test=\$2; dir=file; gsub(/\/[^\/]+$/, \"\", dir); if (packages[dir]) {packages[dir] = packages[dir] \"|\" test} else {packages[dir] = test}} END {for (pkg in packages) {print pkg \":\" packages[pkg]}}'\'' | while IFS=: read -r pkg tests; do echo \"Running tests in \$pkg\"; (cd \"\$pkg\" && gotestsum --format testname --no-color=false -- -run \"^(\$tests)\$\"); done 2>&1 | tee \"$log_file\"" > '"$LAST_RUN_FILE"'
+            
+            # Force colors
+            export FORCE_COLOR=1
+            export TERM=${TERM:-xterm-256color}
+            
             # Extract file:test pairs and group by package directory
             printf "%s\n" {+} | \
             awk -F: '\''
@@ -125,8 +197,8 @@ run_interactive_picker() {
             '\'' | \
             while IFS=: read -r pkg tests; do
                 echo "Running tests in $pkg"
-                (cd "$pkg" && gotestsum --format testname -- -run "^($tests)$")
-            done
+                (cd "$pkg" && gotestsum --format testname --no-color=false -- -run "^($tests)$")
+            done 2>&1 | tee "$log_file"
         )'
 }
 
