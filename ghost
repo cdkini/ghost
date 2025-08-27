@@ -1,59 +1,90 @@
 #!/usr/bin/env bash
 
-# Check if an argument was provided
-if [ $# -gt 0 ]; then
-    # If argument is provided, run tests directly without fzf
-    arg="$1"
-    
-    # Check if it's a directory
-    if [ -d "$arg" ]; then
-        cd "$arg" && gotestsum --format testname
-    # Check if it's a test file
-    elif [ -f "$arg" ] && [[ "$arg" == *_test.go ]]; then
-        cd "$(dirname "$arg")" && gotestsum --format testname
-    # Check if it's a package path (e.g., ./... or ./pkg/...)
-    elif [[ "$arg" == *"..."* ]] || [[ "$arg" == "./"* ]]; then
-        gotestsum --format testname "$arg"
-    # Otherwise treat it as a test name pattern - search across all packages
-    else
-        # Find all directories containing test files that match the pattern
-        fd -e go -g '*_test.go' | xargs rg "^func ($arg\w*)\(" -l | xargs -I {} dirname {} | sort -u | \
-        while read -r dir; do
-            echo "Running tests matching '$arg' in $dir"
-            (cd "$dir" && gotestsum --format testname -- -run "$arg")
-        done
-    fi
-    exit 0
-fi
+# Function to run tests in a directory
+run_tests_in_directory() {
+    local dir="$1"
+    cd "$dir" && gotestsum --format testname
+}
 
-# No arguments - show the interactive picker
-fd -e go -g '*_test.go' | xargs rg '^func (Test\w+)\(' -o -r '$1' --with-filename --no-line-number | awk -F: '{print $1 ":" $2}' | \
-fzf --height 40% \
-    -m \
-    --border=rounded \
-    --header='Select tests (Tab: select, Ctrl-A: select all, Enter: run)' \
-    --delimiter ':' \
-    --with-nth 1.. \
-    --bind 'ctrl-a:select-all' \
-    --bind 'enter:become(
-        printf "%s\n" {+} | while IFS=: read -r file test; do echo "$file:$test"; done | \
-        awk -F: '\''
-            {
-                file=$1
-                test=$2
-                if (files[file]) {
-                    files[file] = files[file] "|" test
-                } else {
-                    files[file] = test
+# Function to run tests in a test file
+run_tests_in_file() {
+    local file="$1"
+    cd "$(dirname "$file")" && gotestsum --format testname
+}
+
+# Function to run tests by package path (e.g., ./...)
+run_tests_by_package_path() {
+    local path="$1"
+    gotestsum --format testname "$path"
+}
+
+# Function to run test by pattern
+run_tests_by_pattern() {
+    local pattern="$1"
+    fd -e go -g '*_test.go' | xargs rg "^func ($pattern\w*)\(" -l | xargs -I {} dirname {} | sort -u | \
+    while read -r dir; do
+        echo "Running tests matching '$pattern' in $dir"
+        (cd "$dir" && gotestsum --format testname -- -run "$pattern")
+    done
+}
+
+# Function to determine argument type and run appropriate function
+run_test_by_arg() {
+    local arg="$1"
+    
+    if [ -d "$arg" ]; then
+        run_tests_in_directory "$arg"
+    elif [ -f "$arg" ] && [[ "$arg" == *_test.go ]]; then
+        run_tests_in_file "$arg"
+    elif [[ "$arg" == *"..."* ]] || [[ "$arg" == "./"* ]]; then
+        run_tests_by_package_path "$arg"
+    else
+        run_tests_by_pattern "$arg"
+    fi
+}
+
+# Function to get test list
+get_test_list() {
+    fd -e go -g '*_test.go' | xargs rg '^func (Test\w+)\(' -o -r '$1' --with-filename --no-line-number | awk -F: '{print $1 ":" $2}'
+}
+
+# Function to run interactive picker
+run_interactive_picker() {
+    get_test_list | \
+    fzf --height 40% \
+        -m \
+        --border=rounded \
+        --header='Tab: select | Ctrl-A: select all | Enter: run' \
+        --delimiter ':' \
+        --with-nth 1.. \
+        --bind 'ctrl-a:select-all' \
+        --bind 'enter:become(
+            printf "%s\n" {+} | while IFS=: read -r file test; do echo "$file:$test"; done | \
+            awk -F: '\''
+                {
+                    file=$1
+                    test=$2
+                    if (files[file]) {
+                        files[file] = files[file] "|" test
+                    } else {
+                        files[file] = test
+                    }
                 }
-            }
-            END {
-                for (f in files) {
-                    print f ":" files[f]
+                END {
+                    for (f in files) {
+                        print f ":" files[f]
+                    }
                 }
-            }
-        '\'' | \
-        while IFS=: read -r file tests; do
-            (cd "$(dirname "$file")" && gotestsum --format testname -- -run "^($tests)$")
-        done
-    )'
+            '\'' | \
+            while IFS=: read -r file tests; do
+                (cd "$(dirname "$file")" && gotestsum --format testname -- -run "^($tests)$")
+            done
+        )'
+}
+
+# Main execution
+if [ $# -gt 0 ]; then
+    run_test_by_arg "$1"
+else
+    run_interactive_picker
+fi
