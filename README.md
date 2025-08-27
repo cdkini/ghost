@@ -1,4 +1,4 @@
-# ghost
+# ghost 👻
 A spooky, vibe-coded CLI tool to run Go tests.
 Uses fzf, rg, fd, and gotestsum to interactively select and run Go tests.
 
