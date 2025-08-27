@@ -1,5 +1,47 @@
 #!/usr/bin/env bash
 
+# Function to show help
+show_help() {
+    cat << EOF
+ghost - A vibe-coded CLI tool to run Go tests ✨
+
+USAGE:
+    ghost [OPTIONS] [ARGUMENT]
+
+OPTIONS:
+    -h, --help    Show this help message
+
+ARGUMENTS:
+    <none>        Interactive test picker with fzf
+    <directory>   Run all tests in the specified directory
+    <file>        Run all tests in the specified test file
+    <pattern>     Run all tests matching the pattern across the codebase
+    ./...         Run all tests in current directory and subdirectories
+
+INTERACTIVE MODE KEYS:
+    Tab           Select/deselect individual tests
+    Ctrl-A        Select all tests
+    Enter         Run selected tests
+
+EXAMPLES:
+    ghost                         # Open interactive test picker
+    ghost TestLogin              # Run all tests matching "TestLogin"
+    ghost ./pkg/auth             # Run all tests in pkg/auth directory
+    ghost auth_test.go           # Run all tests in auth_test.go
+    ghost ./...                  # Run all tests in current directory tree
+
+REQUIREMENTS:
+    fd, rg, fzf, gotestsum
+
+EOF
+    exit 0
+}
+
+# Check for help flag
+if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+    show_help
+fi
+
 # Function to run tests in a directory
 run_tests_in_directory() {
     local dir="$1"
